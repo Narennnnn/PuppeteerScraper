@@ -1,43 +1,86 @@
 const puppeteer = require('puppeteer');
+const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
-(async () => {
+const scrapeAmazon = async () => {
   try {
-    // Launch the browser
-    const browser = await puppeteer.launch({ 
-      headless: 'new', 
+    const browser = await puppeteer.launch({
+      headless: 'new',
       defaultViewport: null,
       userDataDir: './user_data',
     });
 
-    // Open a new page
     const page = await browser.newPage();
 
-    // Navigate to the Flipkart page
-    await page.goto('https://www.flipkart.com/search?q=gaming%20products&otracker=search&otracker1=search&marketplace=FLIPKART&as-show=on&as=off');
+    await page.goto('https://www.amazon.in/s?k=condoms', {
+      waitUntil: 'load'
+    });
 
-    // Wait for the product list to load
-    await page.waitForSelector('._1YokD2 ._3Mn1Gg');//parent div
+    let productList = [];
+    let hasNextPage = true;
 
-    // Get the list of products
-    const products = await page.$$('._1YokD2 ._3Mn1Gg');
+    while (hasNextPage) {
+      await page.waitForSelector('.s-main-slot');
 
-    // Loop through each product and print its title
-    for (const product of products) {
-      // Find the title element within each product using the _13oc-S class
-      const titleElement = await product.$('a.s1Q9rs');//content selector to pick
+      const products = await page.$$('.s-main-slot .s-result-item');
 
-      // Check if the title element is found
-      if (titleElement) {
-        const title = await page.evaluate(el => el.textContent.trim(), titleElement);
-        console.log(title);
+      for (const product of products) {
+        const titleElement = await product.$('h2 span');
+
+        if (titleElement) {
+          const title = await page.evaluate(el => el.textContent.trim(), titleElement);
+
+          const priceElement = await product.$('.a-price .a-offscreen');
+
+          if (priceElement) {
+            const price = await page.evaluate(el => el.textContent.trim(), priceElement);
+
+            const imageElement = await product.$('.s-image');
+
+            if (imageElement) {
+              const image = await page.evaluate(el => el.getAttribute('src'), imageElement);
+              const productInfo = {
+                title: title,
+                price: price,
+                image: image
+              };
+              productList.push(productInfo);
+            } else {
+              console.log(`Image not found for product: ${title}`);
+            }
+          } else {
+            console.log(`Price not found for product: ${title}`);
+          }
+        }
+      }
+
+      const nextButton = await page.$('a.s-pagination-item.s-pagination-next.s-pagination-button.s-pagination-separator');
+      const isNextButtonDisabled = await nextButton.evaluate(button => button.classList.contains('s-pagination-disabled'));
+
+      if (isNextButtonDisabled) {
+        hasNextPage = false;
       } else {
-        // console.log('Title element not found for the current product.');
+        await nextButton.click();
+        await page.waitForTimeout(2000); // Add a delay to ensure the page loads completely
       }
     }
 
-    // Close the browser
+    const csvWriter = createCsvWriter({
+      path: 'products.csv',
+      header: [
+        { id: 'title', title: 'Title' },
+        { id: 'price', title: 'Price' },
+        { id: 'image', title: 'Image' }
+      ],
+      append: true
+    });
+
+    await csvWriter.writeRecords(productList);
+
+    console.log('Data written to products.csv');
+
     await browser.close();
   } catch (error) {
-    console.error('An error occurred:', error);
   }
-})();
+};
+
+scrapeAmazon();
